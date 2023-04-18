@@ -1,0 +1,7 @@
+exatamente dentro da pasta dos arquiovs, primeiro execute o arquivo que cria o socket
+
+	clear && gcc server_unix_domain_socket.c -o server_unix_domain_socket && ./server_unix_domain_socket
+
+depois execute o arquivo que estabele a conexão na porta do arquivo que criou o socket
+
+	clear && gcc client_unix_domain_socket.c -o client_unix_domain_socket && ./client_unix_domain_socket

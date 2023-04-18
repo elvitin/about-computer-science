@@ -1,0 +1,50 @@
+instruções de compilação e execução dos programas
+
+1) certifique-se que você tenha o GCC instalado para compilar os programas.c
+execute as instruções no seu terminal linux:
+
+1.1) Você pode verificar que tem o compilador de C instalado com o comando
+	
+	gcc -v
+
+se na ultima linha aparecer algo como segue
+	
+	gcc version 12.2.0 (Ubuntu 12.2.0-17ubuntu1)
+
+significa que você tem o compilador devidamente configurado na sua maquina
+
+1.2) Caso não receba essa mensagem, siga esses passos:
+
+	sudo apt update
+	sudo apt upgrade
+	sudo apt dist-upgrade (opcional)
+
+(instala apenas o compilador de C)
+
+	sudo apt install gcc 
+
+ou	
+
+(instala todo o toolkit C/C++ inclusive o Make)
+
+	sudo apt install build-essential 
+
+2) após instalado o gcc, compile os e execute os arquivos chat_client_unix_socket.c e chat_server_unix_socket.c
+dentro da pasta extraida, você pode fazer tudo isso com apenas duas linhas de instrução:
+
+	clear && gcc chat_server_unix_socket.c -o chat_server_unix_socket && ./chat_server_unix_socket
+
+	e
+
+	clear && gcc chat_client_unix_socket.c -o chat_client_unix_socket && ./chat_client_unix_socket
+
+mas note que você precisa estar na mesma pasta que os arquivos estão, você pode verificar sua pasta corrente com
+o comando
+
+	pwd
+
+e com ls -lah, você pode exibir todos os arquivos nesse diretório atual, verifique se você está na mesma pasta dos arquivos .c
+
+A ordem de execução dos arquivos não importa, isso foi tratado. (Observação, por enquanto, apenas funcional em ambientes linux).
+
+3) O programa simula uma comunicação de chat via sockets do sistema linux, esse socket não usa endereços ipV4 para var IPC.
