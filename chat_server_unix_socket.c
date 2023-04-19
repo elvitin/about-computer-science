@@ -9,20 +9,80 @@
 #include <ctype.h>      // for isdigit()
 #include <limits.h>     // for INT_MAX
 #include <signal.h>     // for signal(), SIGINT
+#include <pthread.h>    // for pthread_create(), pthread_join()
 
 #define SOCKET_PATH "/tmp/socket_repo"
 #define SOCKET_FILE "/tmp/socket_repo/my_unix_socket"
 #define BUFFER_SIZE 256
-// this file is a chat server
+char keyboardInput[BUFFER_SIZE];
+
 struct SocketState
 {
   int socketFileDescriptor;
   int connectionFileDescriptor;
   int maxConnections;
+  bool stopOperation;
+  bool deregistrationExecuted;
+  bool fullConnectionEstablished;
+  pthread_t messageListenerThread;
+  pthread_t userInputListenerThread;
   socklen_t addressSize;
   struct sockaddr_un socketAddress;
   char buffer[BUFFER_SIZE];
 };
+
+struct SocketState socketState;
+
+void initSocketState(struct SocketState *socketState)
+{
+  socketState->socketFileDescriptor = -1;
+  socketState->connectionFileDescriptor = -1;
+  socketState->maxConnections = 1;
+  socketState->stopOperation = false;
+  socketState->deregistrationExecuted = false;
+  socketState->fullConnectionEstablished = false;
+  socketState->messageListenerThread = 0;
+  socketState->userInputListenerThread = 0;
+  socketState->addressSize = 0;
+  memset(socketState->buffer, 0, BUFFER_SIZE);
+  memset(socketState->socketAddress.sun_path, 0, sizeof(socketState->socketAddress.sun_path));
+}
+
+void unregisterSocket()
+{
+  if (socketState.deregistrationExecuted == true)
+    return;
+
+  puts("\ndesregistrando o socket...");
+  bool opSucess = true;
+  if (socketState.fullConnectionEstablished == true)
+  {
+    if (close(socketState.connectionFileDescriptor) < 0)
+    {
+      perror("falha ao desregistrar descritor de arquivo da conexão");
+      opSucess = false;
+    }
+  }
+  if (close(socketState.socketFileDescriptor) < 0)
+  {
+    perror("falha ao desregistrar descritor de arquivo do socket");
+    opSucess = false;
+  }
+  if (unlink(socketState.socketAddress.sun_path) < 0)
+  {
+    perror("falha ao desvincular o arquivo socket, provavelmente já foi desvinculado pelo outro processo");
+    opSucess = false;
+  }
+
+  socketState.deregistrationExecuted = true;
+  socketState.stopOperation = true;
+  puts(opSucess ? "socket desregistrado!" : "socket desregistrado, porem algumas etapas falharam");
+  if (socketState.fullConnectionEstablished == true)
+  {
+    pthread_kill(socketState.messageListenerThread, SIGKILL);
+    pthread_kill(socketState.userInputListenerThread, SIGKILL);
+  }
+}
 
 void createSocket(struct SocketState *socketState)
 {
@@ -43,7 +103,7 @@ void createSocket(struct SocketState *socketState)
 void configureSocketAddress(struct SocketState *socketState)
 {
   puts("configurando o endereço do socket...");
-  memset(&socketState->socketAddress, 0, sizeof(socketState->socketAddress));
+  // memset(&socketState->socketAddress, 0, sizeof(socketState->socketAddress));
   socketState->socketAddress.sun_family = AF_UNIX;
   // esse peguei na net, confesso que não entendi esses pipes, somente as constantes que são definidas no header sys/stat.h
   mkdir(SOCKET_PATH, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
@@ -82,6 +142,7 @@ void acceptConnection(struct SocketState *socketState)
     perror("falha ao aceitar conexão");
     exit(EXIT_FAILURE);
   }
+  socketState->fullConnectionEstablished = true;
   puts("conexão aceita!");
 }
 
@@ -107,87 +168,67 @@ void setMaxConnetions(int argumentsCounter, char *argumentValues[], struct Socke
     puts("sem argumentos, usando 5 conexões como padrão!");
 }
 
-void waitForMessage(struct SocketState *socketState)
+void messageListener(struct SocketState *socketState)
 {
-  recv(socketState->connectionFileDescriptor, socketState->buffer, BUFFER_SIZE, 0);
+  ssize_t status = 1;
+  while (status != 0 && status != -1 && socketState->stopOperation == false)
+  {
+    status = recv(socketState->connectionFileDescriptor, socketState->buffer, BUFFER_SIZE, 0);
+    if (status == -1)
+      perror("falha ao receber a mensagem");
+    else if (status == 0)
+      perror("conexão encerrada");
+    else
+      printf("%s", socketState->buffer);
+  }
+  unregisterSocket();
+  // pthread_exit(NULL);
 }
 
-void sendMessage(struct SocketState *socketState, char *msgString)
+void userInputListener(struct SocketState *socketState)
 {
-  send(socketState->connectionFileDescriptor, msgString, strlen(msgString) + 1, 0);
+  char msgString[BUFFER_SIZE];
+  bool opSucess = true;
+  while (opSucess && socketState->stopOperation == false)
+  {
+    memset(msgString, 0, BUFFER_SIZE);
+    memset(keyboardInput, 0, BUFFER_SIZE);
+    setbuf(stdin, keyboardInput);
+    if (fgets(msgString, BUFFER_SIZE, stdin) == NULL)
+    {
+      perror("falha ao ler a mensagem do input");
+      opSucess == false;
+    }
+    else if (send(socketState->connectionFileDescriptor, msgString, strlen(msgString) + 1, 0) == -1)
+    {
+      perror("falha ao enviar a mensagem");
+      opSucess == false;
+    }
+  }
+  unregisterSocket();
+  // pthread_exit(NULL);
 }
 
-struct SocketState socketState;
-
-void unregisterSocket()
+int main(int argumentsCounter, char *argumentValues[])
 {
-  puts("\ndesregistrando o socket...");
-  int status = EXIT_SUCCESS;
-  if (close(socketState.connectionFileDescriptor) < 0)
-  {
-    perror("falha ao desregistrar descritor de arquivo da conexão");
-    status = EXIT_FAILURE;
-  }
-
-  if (close(socketState.socketFileDescriptor) < 0)
-  {
-    perror("falha ao desregistrar descritor de arquivo do socket");
-    status = EXIT_FAILURE;
-  }
-
-  if (unlink(socketState.socketAddress.sun_path) < 0)
-  {
-    perror("falha ao desvincular o arquivo socket");
-    status = EXIT_FAILURE;
-  }
-  if (status == EXIT_SUCCESS)
-    puts("socket desregistrado!");
-  exit(status);
-}
-
-int main(int argc, char *argv[])
-{
-  /**
-   * importante
-   *
-   * as funções são chamadas em um ordem lógica, no qual não pode ser alterada.
-   * todas as etapas na sequência que estão,  são necessárias para preparar o
-   * ambiente de socket.
-   */
-
+  puts("[server]");
+  initSocketState(&socketState);
   signal(SIGINT, unregisterSocket);
-  setMaxConnetions(argc, argv, &socketState);
+  setMaxConnetions(argumentsCounter, argumentValues, &socketState);
   createSocket(&socketState);
   configureSocketAddress(&socketState);
   bindSocket(&socketState);
   listenForConnections(&socketState);
   acceptConnection(&socketState); // código pausa esperando a primeira conexão
+  sleep(2);
+  system("clear");
+  puts("[server@localhost]: digite algo, e pressione enter.\n");
 
-  puts("\niniciando loop de comunicação...\n");
-  char messages[][BUFFER_SIZE] = {
-      "Ola cliente!",
-      "Tudo sim! e com você?",
-      "Que otimo!",
-      "Vamos sim!",
-      "Tchau tchau!"};
+  pthread_create(&socketState.messageListenerThread, NULL, (void *)messageListener, (void *)&socketState);
+  pthread_create(&socketState.userInputListenerThread, NULL, (void *)userInputListener, (void *)&socketState);
 
-  // chamar função para desregistrar o socket tanto no signal quanto no erro do waitForMessage ou sendMessage
-  size_t len = sizeof messages / sizeof messages[0];
-  int i = 0;
-  while (true)
-  {
-    if (i == len)
-    {
-      putchar('\n');
-      i = 0;
-    }
-    waitForMessage(&socketState);
-    puts(socketState.buffer);
-    sleep(1);
+  pthread_join(socketState.messageListenerThread, NULL);
+  pthread_join(socketState.userInputListenerThread, NULL);
 
-    sendMessage(&socketState, messages[i]);
-    i++;
-    sleep(1);
-  }
   return EXIT_SUCCESS;
 }
