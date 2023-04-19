@@ -2,8 +2,8 @@
 #include <stdlib.h>     // for EXIT_SUCCESS, EXIT_FAILURE
 #include <stdbool.h>    // for bool, true, false
 #include <string.h>     // for memset, strcpy
-#include <signal.h>     // for signal, SIGINT
-#include <unistd.h>     // for close, unlink
+#include <signal.h>     // for signal, SIGINT, SIGKILL
+#include <unistd.h>     // for close, unlink, getpid, sleep
 #include <sys/un.h>     // for sockaddr_un
 #include <sys/socket.h> // for socket, AF_UNIX, SOCK_STREAM, socklen_t
 #include <sys/stat.h>   // for S_IRWXU, S_IRWXG, S_IROTH, S_IXOTH
@@ -29,15 +29,47 @@ struct SocketState
 
 struct SocketState socketState;
 
+void initSocketState(struct SocketState *socketState);
+void unregisterSocket();
+void createSocket(struct SocketState *socketState);
+void configureSocketAddress(struct SocketState *socketState);
+void establishConnection(struct SocketState *socketState);
+void messageListener(struct SocketState *socketState);
+void userInputListener(struct SocketState *socketState);
+void createThreads(struct SocketState *socketState);
+void waitForThreads(struct SocketState *socketState);
+
+int main(void)
+{
+  /**
+   * Esse sequência de funções é a ordem que deve ser seguida para a criação de um socket
+   * e foi logicamente pensada para preparar o ambiente do socket.
+   *
+   * Caso for alterada a ordem de alguma das funções, o programa pode falhar.
+   */
+  puts("[client]");
+  initSocketState(&socketState);
+  signal(SIGINT, unregisterSocket);
+  createSocket(&socketState);
+  configureSocketAddress(&socketState);
+  establishConnection(&socketState);
+  createThreads(&socketState);
+  waitForThreads(&socketState);
+  return EXIT_SUCCESS;
+}
+
 void initSocketState(struct SocketState *socketState)
 {
+  /**
+   * Esses valores iniciais, não podem ser alterados
+   */
   socketState->socketFileDescriptor = -1;
   socketState->addressSize = 0;
   socketState->stopOperation = false;
   socketState->deregistrationExecuted = false;
   socketState->fullConnectionEstablished = false;
-  socketState->messageListenerThread = 0;
-  socketState->userInputListenerThread = 0;
+  socketState->messageListenerThread = -1;
+  socketState->userInputListenerThread = -1;
   memset(socketState->buffer, 0, BUFFER_SIZE);
   memset(socketState->socketAddress.sun_path, 0, sizeof(socketState->socketAddress.sun_path));
 }
@@ -49,14 +81,14 @@ void unregisterSocket()
 
   puts("\ndesregistrando o socket...");
   bool opSucess = true;
-  if (close(socketState.socketFileDescriptor) < 0)
+  if (close(socketState.socketFileDescriptor) == -1)
   {
     perror("falha ao desregistrar descritor de arquivo do socket");
     opSucess = false;
   }
-  if (unlink(socketState.socketAddress.sun_path) < 0)
+  if (unlink(socketState.socketAddress.sun_path) == -1)
   {
-    perror("falha ao desvincular o arquivo socket, provavelmente já foi desvinculado pelo outro processo");
+    perror("falha ao desvincular o arquivo socket, provavelmente já foi desvinculado pelo outro processo ou é inexistente");
     opSucess = false;
   }
   socketState.deregistrationExecuted = true;
@@ -77,7 +109,7 @@ void createSocket(struct SocketState *socketState)
 {
   puts("criando o socket unix domain...");
   socketState->socketFileDescriptor = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (socketState->socketFileDescriptor < 0)
+  if (socketState->socketFileDescriptor == -1)
   {
     perror("falha ao criar o socket");
     exit(EXIT_FAILURE);
@@ -88,7 +120,6 @@ void createSocket(struct SocketState *socketState)
 void configureSocketAddress(struct SocketState *socketState)
 {
   puts("configurando o endereço do socket...");
-  memset(&socketState->socketAddress, 0, sizeof(socketState->socketAddress));
   socketState->socketAddress.sun_family = AF_UNIX;
   mkdir(SOCKET_PATH, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
   strcpy(socketState->socketAddress.sun_path, SOCKET_FILE);
@@ -98,7 +129,7 @@ void configureSocketAddress(struct SocketState *socketState)
 void establishConnection(struct SocketState *socketState)
 {
   puts("estabelecendo conexão...");
-  if (connect(socketState->socketFileDescriptor, (struct sockaddr *)&socketState->socketAddress, socketState->addressSize) < 0)
+  if (connect(socketState->socketFileDescriptor, (struct sockaddr *)&socketState->socketAddress, socketState->addressSize) == -1)
   {
     perror("falha ao estabelecer conexão");
     sleep(2);
@@ -127,7 +158,6 @@ void messageListener(struct SocketState *socketState)
       printf("%s", socketState->buffer);
   }
   unregisterSocket();
-  // pthread_exit(NULL);
 }
 
 void userInputListener(struct SocketState *socketState)
@@ -139,7 +169,7 @@ void userInputListener(struct SocketState *socketState)
     memset(msgString, 0, BUFFER_SIZE);
     memset(keyboardInput, 0, BUFFER_SIZE);
     setbuf(stdin, keyboardInput);
-    // pesquisar como cancelar fgets
+
     if (fgets(msgString, BUFFER_SIZE, stdin) == NULL)
     {
       perror("falha ao ler a mensagem do input");
@@ -152,25 +182,43 @@ void userInputListener(struct SocketState *socketState)
     }
   }
   unregisterSocket();
-  pthread_exit(NULL);
 }
 
-int main(void)
+void createThreads(struct SocketState *socketState) // ok
 {
-  puts("[client]");
-  initSocketState(&socketState);
-  signal(SIGINT, unregisterSocket);
-  createSocket(&socketState);
-  configureSocketAddress(&socketState);
-  establishConnection(&socketState);
+  if (pthread_create(&socketState->messageListenerThread, NULL, (void *)messageListener, (void *)socketState) != 0)
+  {
+    perror("falha ao criar thread de ouvinte de mensagens");
+    unregisterSocket();
+    exit(EXIT_FAILURE);
+  }
+
+  if (pthread_create(&socketState->userInputListenerThread, NULL, (void *)userInputListener, (void *)socketState) != 0)
+  {
+    perror("falha ao criar thread de ouvinte de entrada de usuário");
+    unregisterSocket();
+    exit(EXIT_FAILURE);
+  }
   sleep(2);
   system("clear");
-  puts("[client@localhost]: digite algo, e pressione enter.\n");
+  puts("para encerrar o programa pressione [CTRL+C]");
+  puts("digite um texto de no máximo (BUFFER_SIZE - 2), e pressione [ENTER]");
+  puts("[client@localhost]:\n");
+}
 
-  pthread_create(&socketState.messageListenerThread, NULL, (void *)messageListener, (void *)&socketState);
-  pthread_create(&socketState.userInputListenerThread, NULL, (void *)userInputListener, (void *)&socketState);
+void waitForThreads(struct SocketState *socketState) // ok
+{
+  if (pthread_join(socketState->messageListenerThread, NULL) != 0)
+  {
+    perror("falha ao esperar thread de ouvinte de mensagens");
+    unregisterSocket();
+    exit(EXIT_FAILURE);
+  }
 
-  pthread_join(socketState.messageListenerThread, NULL);
-  pthread_join(socketState.userInputListenerThread, NULL);
-  return EXIT_SUCCESS;
+  if (pthread_join(socketState->userInputListenerThread, NULL) != 0)
+  {
+    perror("falha ao esperar thread de ouvinte de entrada de usuário");
+    unregisterSocket();
+    exit(EXIT_FAILURE);
+  }
 }

@@ -38,8 +38,9 @@ dentro da pasta extraida, você pode fazer tudo isso com apenas duas linhas de i
 
 	clear && gcc chat_client_unix_socket.c -o chat_client_unix_socket && ./chat_client_unix_socket
 
-mas note que você precisa estar na mesma pasta que os arquivos estão, você pode verificar sua pasta corrente com
-o comando
+Cada comando deve ser executado em uma instância de terminal diferente, cada terminal é como se fosse um usuário.
+Note também que você precisa estar na mesma pasta que os arquivos estão para executar o comando, você pode verificar 
+sua pasta corrente com o comando:
 
 	pwd
 
@@ -47,4 +48,7 @@ e com ls -lah, você pode exibir todos os arquivos nesse diretório atual, verif
 
 A ordem de execução dos arquivos não importa, isso foi tratado. (Observação, por enquanto, apenas funcional em ambientes linux).
 
-3) O programa simula uma comunicação de chat via sockets do sistema linux, esse socket não usa endereços ipV4 para var IPC.
+3) O programa simula um chat via sockets do sistema linux, esse socket não usa endereços  ipV4 (por enquanto) para o IPC, 
+ao invéz disso usa descritores de arquivo, ou seja, imagino que a implementação crie um arquivo como despejo e leitura de dados.
+
+Para encerrar programa, pressiona CTRL + C, em qualquer um dos processos.
